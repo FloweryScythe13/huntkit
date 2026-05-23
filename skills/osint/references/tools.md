@@ -36,6 +36,26 @@
 - search-yandex: `brightdata.sh search-yandex "query"` (better for Russian targets)
 - Batch: up to 10 queries
 
+## OrgINT Tools (mcp__org-intel__)
+
+No API key required. All sources are public and unauthenticated.
+
+### ICIJ Offshore Leaks
+
+- **Coverage:** Panama Papers, Paradise Papers, Pandora Papers, Bahamas Leaks, Offshore Leaks — 810,000+ offshore entities spanning 80+ years
+- **Node types:** Entity (offshore company/trust/fund), Officer (person or company with a role), Intermediary (law firm or agent that registered the entity), Address
+- **Roles captured:** director, shareholder, beneficiary, nominee, protector, secretary, and others
+- **Best for:** checking whether a subject appears as an officer of any offshore entity; mapping shell company networks; finding financial intermediaries and co-shareholders; surfacing jurisdictions (BVI, Cayman, Panama, etc.)
+- **Weakness:** point-in-time datasets — reflects state of records at leak date, not current corporate status; does not cover all offshore structures, only those in leaked documents
+- **Grade:** A for score ≥ 85 (exact match verified by ICIJ); B for 60-84 (probable, cross-verify); C for < 60
+
+```
+mcp__org-intel__icij_search  query="<name>" entity_type="officer|entity|intermediary" dataset="panama-papers|..." country_code="GBR"
+mcp__org-intel__icij_node    node_id=<integer id>
+```
+
+---
+
 ## Scraping Tools
 
 ### web_fetch (built-in)

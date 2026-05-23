@@ -29,6 +29,10 @@
       "env": {
         "APIFY_TOKEN": "${APIFY_TOKEN}"
       }
+    },
+    "org-intel": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/mcp-servers/org-intel/.venv/bin/python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-servers/org-intel/server.py"]
     }
   }
 }

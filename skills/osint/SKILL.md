@@ -86,7 +86,45 @@ bash skills/osint/scripts/exa.sh search "<Name> <context>"
 bash skills/osint/scripts/exa.sh people "<Name>"
 ```
 → Returns: quick facts, links, context.
-→ Decision: enough? → Phase 6. Need more? → Level 2.
+→ Decision: enough? → Phase 6. Need more? → Level 1.5 (if applicable) then Level 2.
+
+### Level 1.5: OrgINT Cross-Reference (free, ~$0.00)
+
+Run in parallel with Level 1 for any subject with **corporate roles, registered businesses,
+high net worth, or financial opacity**. Always run and note the result — absence of a record
+is itself evidence (Grade B: corroboration by absence).
+
+```
+# Search all ICIJ leak datasets for the subject as an officer
+mcp__org-intel__icij_search query="<Full Name>" entity_type="officer"
+
+# If the subject is associated with a specific country, narrow it:
+mcp__org-intel__icij_search query="<Full Name>" entity_type="officer" country_code="<ISO-3>"
+
+# On any hit with score ≥ 60: retrieve the full record and connected parties
+mcp__org-intel__icij_node node_id=<id>
+  → Returns: data source (which leak), jurisdiction, status, incorporation date,
+             connected officers (associates), intermediaries (law firms/agents), addresses.
+
+# Search for companies associated with the subject:
+mcp__org-intel__icij_search query="<Company Name>" entity_type="entity"
+mcp__org-intel__icij_node node_id=<entity_id>
+  → Returns: full entity record including ALL connected officers (shareholder/director/beneficiary list).
+```
+
+**Grading ICIJ hits:**
+- Score ≥ 85: treat as Grade A (exact or near-exact match — verified by ICIJ investigation team)
+- Score 60-84: Grade B (probable match — cross-verify name + country against other sources)
+- Score < 60: Grade C (possible match — manual review required)
+
+**Cite hits as:** `[ICIJ-<data_source>-<node_id>]` (e.g. `[ICIJ-panama_papers-10067217]`).
+Every hit must go through `bash skills/osint/scripts/capture-evidence.sh` using the `node_url`.
+
+**Dataset scope:** Panama Papers, Paradise Papers, Pandora Papers, Bahamas Leaks, Offshore Leaks.
+FinCEN Files and Luanda Leaks are not available via namespaced endpoints — use the general search.
+
+→ Returns: offshore entity connections, roles (director/shareholder/beneficiary), jurisdictions,
+           and associated law firms/agents. Feed into Phase 3 cross-reference.
 
 ### Level 2: Source Verification (seconds to minutes, ~$0.01)
 Verify sources from Level 1 via fetch:

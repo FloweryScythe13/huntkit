@@ -32,7 +32,10 @@
     },
     "org-intel": {
       "command": "${CLAUDE_PLUGIN_ROOT}/mcp-servers/org-intel/.venv/bin/python",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-servers/org-intel/server.py"]
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-servers/org-intel/server.py"],
+      "env": {
+        "CH_API_KEY": "${CH_API_KEY}"
+      }
     }
   }
 }

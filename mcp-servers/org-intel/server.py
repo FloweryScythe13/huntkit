@@ -7,15 +7,25 @@ Sources (added one at a time, verified before next):
     - icij_search : fuzzy name search via Reconciliation API
     - icij_node   : full record + connected parties via REST API
 
-API documentation:
-  REST:            https://offshoreleaks.icij.org/api/v1/rest
-  Reconciliation:  https://offshoreleaks.icij.org/api/v1/reconcile
-  OpenAPI spec:    https://offshoreleaks.icij.org/api/v1/rest/openapi/nodes
+  Companies House (UK official registry)
+    - ch_search   : company name search
+    - ch_company  : full company profile
+    - ch_officers : officer list (directors, secretaries, etc.)
+    - ch_psc      : persons with significant control (beneficial ownership)
 
-No API key required — all endpoints are public.
+API documentation:
+  ICIJ REST:            https://offshoreleaks.icij.org/api/v1/rest
+  ICIJ Reconciliation:  https://offshoreleaks.icij.org/api/v1/reconcile
+  ICIJ OpenAPI spec:    https://offshoreleaks.icij.org/api/v1/rest/openapi/nodes
+  Companies House API:  https://developer.company-information.service.gov.uk
+
+Required environment variables:
+  CH_API_KEY — Companies House Public Data API key (free registration required).
+               Get one at https://developer.company-information.service.gov.uk
 """
 
 import json
+import os
 
 import httpx
 from fastmcp import FastMCP
@@ -24,21 +34,24 @@ mcp = FastMCP(
     "org-intel",
     instructions=(
         "Organisational intelligence tools for investigations. "
-        "Use icij_search to check whether a person or entity appears in the ICIJ Offshore Leaks "
-        "database (Panama Papers, Paradise Papers, Pandora Papers, Bahamas Leaks, Offshore Leaks). "
-        "Use icij_node to retrieve the full record—connected officers, intermediaries, addresses—"
-        "for any node ID returned by icij_search."
+        "ICIJ tools: use icij_search to check whether a person or entity appears in the ICIJ "
+        "Offshore Leaks database (Panama Papers, Paradise Papers, Pandora Papers, Bahamas Leaks, "
+        "Offshore Leaks); use icij_node for full record including connected officers, "
+        "intermediaries, and addresses. "
+        "Companies House tools (UK): use ch_search to find a UK company by name; ch_company for "
+        "full profile including registered address, SIC codes, and filing status; ch_officers for "
+        "the list of directors and secretaries; ch_psc for persons with significant control "
+        "(beneficial ownership). Requires CH_API_KEY env var."
     ),
 )
 
 # ---------------------------------------------------------------------------
-# Constants
+# ICIJ constants
 # ---------------------------------------------------------------------------
 
 ICIJ_RECONCILE = "https://offshoreleaks.icij.org/api/v1/reconcile"
 ICIJ_REST      = "https://offshoreleaks.icij.org/api/v1/rest"
 
-# Namespaced reconciliation endpoints (dataset slugs accepted by ICIJ)
 ICIJ_DATASETS = frozenset({
     "bahamas-leaks",
     "offshore-leaks",
@@ -47,7 +60,6 @@ ICIJ_DATASETS = frozenset({
     "paradise-papers",
 })
 
-# Short type names accepted by the Reconciliation API
 ICIJ_TYPES = {
     "officer":      "Officer",
     "entity":       "Entity",
@@ -56,9 +68,15 @@ ICIJ_TYPES = {
     "other":        "Other",
 }
 
+# ---------------------------------------------------------------------------
+# Companies House constants
+# ---------------------------------------------------------------------------
+
+CH_BASE = "https://api.company-information.service.gov.uk"
+
 
 # ---------------------------------------------------------------------------
-# Helpers
+# ICIJ helpers
 # ---------------------------------------------------------------------------
 
 def _type_from_schema(schema: str) -> str:
@@ -97,7 +115,6 @@ def _flatten_node(raw: dict) -> dict:
         "node_url":      f"https://offshoreleaks.icij.org/nodes/{node_id}" if node_id else "",
     }
 
-    # Entity-specific fields
     entity_links: dict = {}
     if node_type == "entity":
         out.update({
@@ -119,6 +136,38 @@ def _flatten_node(raw: dict) -> dict:
     cleaned = {k: v for k, v in out.items() if v not in ("", None, [])}
     cleaned.update(entity_links)
     return cleaned
+
+
+# ---------------------------------------------------------------------------
+# Companies House helpers
+# ---------------------------------------------------------------------------
+
+def _ch_auth() -> httpx.BasicAuth | None:
+    """Return HTTP Basic auth for CH API, or None if key is not configured."""
+    key = os.environ.get("CH_API_KEY", "")
+    if not key:
+        return None
+    return httpx.BasicAuth(key, "")
+
+
+_CH_KEY_MISSING = (
+    "ERROR: CH_API_KEY environment variable not set. "
+    "Register for a free key at https://developer.company-information.service.gov.uk"
+)
+
+
+def _format_ch_address(addr: dict) -> str:
+    """Format a Companies House address dict to a single comma-separated string."""
+    parts = [
+        addr.get("premises", ""),
+        addr.get("address_line_1", ""),
+        addr.get("address_line_2", ""),
+        addr.get("locality", ""),
+        addr.get("region", ""),
+        addr.get("postal_code", ""),
+        addr.get("country", ""),
+    ]
+    return ", ".join(p for p in parts if p)
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +203,6 @@ async def icij_search(
     """
     limit = max(1, min(25, limit))
 
-    # Validate optional filters
     if entity_type:
         et = entity_type.lower()
         if et not in ICIJ_TYPES:
@@ -171,7 +219,6 @@ async def icij_search(
     else:
         url = ICIJ_RECONCILE
 
-    # Build Reconciliation API query payload
     payload: dict = {"query": query, "limit": limit}
     if type_param:
         payload["type"] = type_param
@@ -250,6 +297,274 @@ async def icij_node(node_id: int) -> str:
 
     raw = resp.json()
     return json.dumps(_flatten_node(raw), indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Companies House tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def ch_search(
+    query: str,
+    company_type: str = "",
+    status: str = "",
+    limit: int = 10,
+) -> str:
+    """Search the UK Companies House register for a company by name.
+
+    Returns company name, number, status, type, date of creation, and registered address snippet.
+    Use ch_company with the returned company_number for the full profile, and ch_officers /
+    ch_psc for ownership details.
+
+    Requires CH_API_KEY environment variable (free registration at
+    https://developer.company-information.service.gov.uk).
+
+    Args:
+        query: Company name or fragment to search for (e.g. "Acme Holdings", "Smith & Co").
+        company_type: Optional filter — e.g. "ltd", "plc", "llp", "limited-partnership",
+                      "oversea-company". Leave empty to search all types.
+        status: Optional filter — e.g. "active", "dissolved", "liquidation". Leave empty for all.
+        limit: Max results to return (1-25, default 10).
+    """
+    auth = _ch_auth()
+    if not auth:
+        return _CH_KEY_MISSING
+
+    limit = max(1, min(25, limit))
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        try:
+            resp = await client.get(
+                f"{CH_BASE}/search/companies",
+                params={"q": query, "items_per_page": 25},
+                auth=auth,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                return "ERROR: Companies House API key invalid or unauthorised."
+            return f"ERROR: Companies House API returned HTTP {e.response.status_code}"
+        except httpx.RequestError as e:
+            return f"ERROR: Request failed — {e}"
+
+    items = resp.json().get("items", [])
+
+    if company_type:
+        items = [i for i in items if i.get("company_type", "").lower() == company_type.lower()]
+    if status:
+        items = [i for i in items if i.get("company_status", "").lower() == status.lower()]
+
+    hits = []
+    for item in items[:limit]:
+        h = {
+            "company_name":   item.get("company_name", ""),
+            "company_number": item.get("company_number", ""),
+            "company_status": item.get("company_status", ""),
+            "company_type":   item.get("company_type", ""),
+            "date_of_creation": item.get("date_of_creation", ""),
+            "address_snippet":  item.get("address_snippet", ""),
+        }
+        hits.append({k: v for k, v in h.items() if v})
+
+    return json.dumps({
+        "query":   query,
+        "total":   len(hits),
+        "results": hits,
+        "note":    "Call ch_company(company_number) for full profile, ch_officers for directors.",
+    }, indent=2)
+
+
+@mcp.tool()
+async def ch_company(company_number: str) -> str:
+    """Retrieve the full Companies House profile for a UK company.
+
+    Returns company name, number, status, type, jurisdiction, SIC codes, registered address,
+    incorporation and dissolution dates, and flags for charges and insolvency history.
+
+    Get company numbers from ch_search. The Companies House URL is included for evidence capture.
+
+    Args:
+        company_number: Companies House registration number (e.g. "12345678", "SC123456").
+    """
+    auth = _ch_auth()
+    if not auth:
+        return _CH_KEY_MISSING
+
+    number = company_number.upper().strip()
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        try:
+            resp = await client.get(f"{CH_BASE}/company/{number}", auth=auth)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return f"ERROR: Company {number} not found in Companies House."
+            if e.response.status_code == 401:
+                return "ERROR: Companies House API key invalid or unauthorised."
+            return f"ERROR: Companies House API returned HTTP {e.response.status_code}"
+        except httpx.RequestError as e:
+            return f"ERROR: Request failed — {e}"
+
+    raw = resp.json()
+    addr = raw.get("registered_office_address", {})
+
+    out = {
+        "company_name":         raw.get("company_name", ""),
+        "company_number":       raw.get("company_number", ""),
+        "company_status":       raw.get("company_status", ""),
+        "type":                 raw.get("type", ""),
+        "jurisdiction":         raw.get("jurisdiction", ""),
+        "date_of_creation":     raw.get("date_of_creation", ""),
+        "date_of_cessation":    raw.get("date_of_cessation", ""),
+        "sic_codes":            raw.get("sic_codes", []),
+        "registered_office":    _format_ch_address(addr),
+        "has_charges":          raw.get("has_charges", False),
+        "has_insolvency_history": raw.get("has_insolvency_history", False),
+        "company_url":          f"https://find-and-update.company-information.service.gov.uk/company/{number}",
+    }
+
+    # Always keep the boolean flags (False is informative), strip only empty strings/None/[].
+    return json.dumps(
+        {k: v for k, v in out.items() if v not in ("", None, [])},
+        indent=2,
+    )
+
+
+@mcp.tool()
+async def ch_officers(
+    company_number: str,
+    include_resigned: bool = False,
+) -> str:
+    """List the officers (directors, secretaries, etc.) of a UK Companies House company.
+
+    By default returns only active officers. Set include_resigned=True to include historical
+    appointments — useful for tracing past directorships.
+
+    Args:
+        company_number: Companies House registration number (e.g. "12345678", "SC123456").
+        include_resigned: If True, include officers who have resigned (default False).
+    """
+    auth = _ch_auth()
+    if not auth:
+        return _CH_KEY_MISSING
+
+    number = company_number.upper().strip()
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        try:
+            resp = await client.get(
+                f"{CH_BASE}/company/{number}/officers",
+                params={"items_per_page": 50},
+                auth=auth,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return f"ERROR: Company {number} not found in Companies House."
+            if e.response.status_code == 401:
+                return "ERROR: Companies House API key invalid or unauthorised."
+            return f"ERROR: Companies House API returned HTTP {e.response.status_code}"
+        except httpx.RequestError as e:
+            return f"ERROR: Request failed — {e}"
+
+    data = resp.json()
+    items = data.get("items", [])
+
+    if not include_resigned:
+        items = [i for i in items if not i.get("resigned_on")]
+
+    officers = []
+    for item in items:
+        o: dict = {
+            "name":               item.get("name", ""),
+            "role":               item.get("officer_role", ""),
+            "appointed_on":       item.get("appointed_on", ""),
+            "nationality":        item.get("nationality", ""),
+            "country_of_residence": item.get("country_of_residence", ""),
+            "occupation":         item.get("occupation", ""),
+        }
+        if include_resigned and item.get("resigned_on"):
+            o["resigned_on"] = item["resigned_on"]
+        addr = item.get("address", {})
+        if addr:
+            o["address"] = _format_ch_address(addr)
+        officers.append({k: v for k, v in o.items() if v})
+
+    return json.dumps({
+        "company_number":   number,
+        "active_count":     data.get("active_count", 0),
+        "total_results":    len(items),
+        "include_resigned": include_resigned,
+        "officers":         officers,
+    }, indent=2)
+
+
+@mcp.tool()
+async def ch_psc(company_number: str) -> str:
+    """List the persons with significant control (PSC) for a UK Companies House company.
+
+    PSCs are individuals or legal entities who own or control more than 25% of shares or voting
+    rights, or who otherwise exercise significant influence or control. This is the primary
+    beneficial ownership register for UK companies.
+
+    Args:
+        company_number: Companies House registration number (e.g. "12345678", "SC123456").
+    """
+    auth = _ch_auth()
+    if not auth:
+        return _CH_KEY_MISSING
+
+    number = company_number.upper().strip()
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        try:
+            resp = await client.get(
+                f"{CH_BASE}/company/{number}/persons-with-significant-control",
+                params={"items_per_page": 50},
+                auth=auth,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return f"ERROR: Company {number} not found in Companies House."
+            if e.response.status_code == 401:
+                return "ERROR: Companies House API key invalid or unauthorised."
+            return f"ERROR: Companies House API returned HTTP {e.response.status_code}"
+        except httpx.RequestError as e:
+            return f"ERROR: Request failed — {e}"
+
+    data = resp.json()
+    items = data.get("items", [])
+
+    pscs = []
+    for item in items:
+        p: dict = {
+            "name":                item.get("name", ""),
+            "natures_of_control":  item.get("natures_of_control", []),
+            "nationality":         item.get("nationality", ""),
+            "country_of_residence": item.get("country_of_residence", ""),
+            "notified_on":         item.get("notified_on", ""),
+        }
+        if item.get("ceased_on"):
+            p["ceased_on"] = item["ceased_on"]
+        addr = item.get("address", {})
+        if addr:
+            p["address"] = _format_ch_address(addr)
+        pscs.append({k: v for k, v in p.items() if v not in ("", None, [])})
+
+    if not pscs:
+        return json.dumps({
+            "company_number": number,
+            "total":          0,
+            "pscs":           [],
+            "note":           "No PSC records found — company may have exemption or be newly registered.",
+        }, indent=2)
+
+    return json.dumps({
+        "company_number": number,
+        "total":          len(pscs),
+        "pscs":           pscs,
+    }, indent=2)
 
 
 # ---------------------------------------------------------------------------

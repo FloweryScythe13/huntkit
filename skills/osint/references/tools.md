@@ -38,9 +38,9 @@
 
 ## OrgINT Tools (mcp__org-intel__)
 
-No API key required. All sources are public and unauthenticated.
-
 ### ICIJ Offshore Leaks
+
+No API key required — public, unauthenticated.
 
 - **Coverage:** Panama Papers, Paradise Papers, Pandora Papers, Bahamas Leaks, Offshore Leaks — 810,000+ offshore entities spanning 80+ years
 - **Node types:** Entity (offshore company/trust/fund), Officer (person or company with a role), Intermediary (law firm or agent that registered the entity), Address
@@ -52,6 +52,23 @@ No API key required. All sources are public and unauthenticated.
 ```
 mcp__org-intel__icij_search  query="<name>" entity_type="officer|entity|intermediary" dataset="panama-papers|..." country_code="GBR"
 mcp__org-intel__icij_node    node_id=<integer id>
+```
+
+### Companies House (UK)
+
+Requires `CH_API_KEY` env var. Free key at https://developer.company-information.service.gov.uk
+
+- **Coverage:** All UK registered companies (active, dissolved, in liquidation) — 5M+ entities
+- **Best for:** verifying UK company registration; finding directors and their other appointments; identifying beneficial owners via PSC register; checking for charges (secured debt) or insolvency history
+- **Workflow:** `ch_search` → get company_number → `ch_company` for profile + `ch_officers` for directors + `ch_psc` for ownership
+- **PSC register:** persons owning/controlling >25% shares or voting rights; legal entities with significant influence; cross-reference with ICIJ for offshore structures
+- **`ch_officers` tip:** `include_resigned=True` shows historical directorships — useful for tracing networks across dissolved companies
+
+```
+mcp__org-intel__ch_search    query="<company name>" company_type="ltd|plc|llp" status="active|dissolved"
+mcp__org-intel__ch_company   company_number="12345678"
+mcp__org-intel__ch_officers  company_number="12345678" include_resigned=False
+mcp__org-intel__ch_psc       company_number="12345678"
 ```
 
 ---

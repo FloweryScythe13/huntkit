@@ -174,33 +174,39 @@ git clone https://github.com/assafkip/huntkit.git
 
 ## MCP server setup
 
-```bash
-cp .mcp.json.template .mcp.json
-```
-
-### `osint-infra` (no keys required)
+### 1. Install Python dependencies
 
 ```bash
-cd mcp-servers/osint-infra
-python3.13 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+# osint-infra (no keys required)
+cd mcp-servers/osint-infra && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && cd ../..
+
+# org-intel (Companies House key required — see step 2)
+cd mcp-servers/org-intel && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && cd ../..
+
+# threat-intel (VirusTotal + abuse.ch keys required — see step 2)
+cd mcp-servers/threat-intel && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && cd ../..
 ```
 
-### `threat-intel`
-
-Get free keys:
-- VirusTotal: https://virustotal.com/gui/join-us (500 req/day)
-- abuse.ch (URLhaus + ThreatFox): https://auth.abuse.ch
+### 2. Configure API keys
 
 ```bash
-export VT_API_KEY=...
-export ABUSE_CH_AUTH_KEY=...
+cp .env.example .env   # then open .env and fill in your keys
+bash setup-env.sh      # generates .mcp.json from the template
 ```
+
+Re-run `bash setup-env.sh` any time you add or change a key in `.env`.
+
+**Key sources:**
+
+| Env var | Service | Where to get it |
+|---|---|---|
+| `VT_API_KEY` | VirusTotal (threat-intel) | https://virustotal.com/gui/join-us — 500 req/day free |
+| `ABUSE_CH_AUTH_KEY` | abuse.ch / URLhaus / ThreatFox (threat-intel) | https://auth.abuse.ch — free |
+| `CH_API_KEY` | Companies House (org-intel) | https://developer.company-information.service.gov.uk — free |
 
 ## Optional search / scrape APIs
 
-All optional — the skill degrades gracefully. Run `bash skills/osint/scripts/diagnose.sh` to see what's active.
+All optional — the skill degrades gracefully. Run `bash skills/osint/scripts/diagnose.sh` to see what's active. Add these to your `.env` then re-run `bash setup-env.sh`.
 
 | Env var | Service | Get key |
 |---|---|---|

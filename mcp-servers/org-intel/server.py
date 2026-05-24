@@ -116,7 +116,7 @@ def _flatten_node(raw: dict) -> dict:
     }
 
     entity_links: dict = {}
-    if node_type == "entity":
+    if node_type.lower() == "entity":
         out.update({
             "jurisdiction":       props.get("jurisdiction", ""),
             "status":             props.get("status", ""),

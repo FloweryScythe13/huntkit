@@ -27,22 +27,67 @@ jobs:
           git diff origin/${{ github.base_ref }}...HEAD > pr_diff.txt
           echo "Diff saved to pr_diff.txt"
 
+      - name: Get existing review comments
+        id: prior_comments
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Fetch comments from this PR that were posted by the review workflow.
+          # We filter by a marker in the comment body so we only get our own comments,
+          # not comments from other reviewers or the developer themselves.
+
+          PRIOR=$(gh pr view $PR_NUMBER --json comments \\
+            --jq '[.comments[] | select(.body | contains("**Claude Code Review**")) | .body] | join("\\n\\n---\\n\\n")')
+
+          # Save to a file to avoid shell escaping issues with multi-line strings
+          echo "$PRIOR" > prior_comments.txt
+
+          # Check whether there are any prior comments at all
+          if [ -z "$PRIOR" ]; then
+            echo "No prior review comments found"
+            echo "has_prior=false" >> $GITHUB_OUTPUT
+          else
+            echo "Found prior review comments"
+            echo "has_prior=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: Run Claude review
         id: review
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          # Run Claude Code non-interactively with structured output.
-          # The -p flag is what makes it exit cleanly rather than waiting for input.
-          # We pass the diff as context by including it in the prompt.
           DIFF_CONTENT=$(cat pr_diff.txt)
+          PRIOR_COMMENTS=$(cat prior_comments.txt)
 
-          claude -p "Review this pull request diff for bugs, security vulnerabilities,
+          # Build the prompt dynamically based on whether there are prior comments.
+          # If this is the first review, ask for a full review.
+          # If there are prior comments, ask only for new or still-unresolved issues.
+
+          if [ "${{ steps.prior_comments.outputs.has_prior }}" = "true" ]; then
+            PROMPT="Review this pull request diff for bugs, security vulnerabilities,
+          missing error handling, and violations of our architecture conventions.
+
+          IMPORTANT: The following issues were already reported in a previous review of this PR.
+          Only report issues that are NEW (not in the list below) or issues that were previously
+          reported but are STILL PRESENT in the current diff. Do not re-report issues that have
+          already been fixed.
+
+          PREVIOUSLY REPORTED ISSUES:
+          $PRIOR_COMMENTS
+
+          Current PR diff:
+          $DIFF_CONTENT"
+          else
+            PROMPT="Review this pull request diff for bugs, security vulnerabilities,
           missing error handling, and violations of our architecture conventions.
           Focus on real issues, skip style preferences and things the linter handles.
 
           PR diff:
-          $DIFF_CONTENT" \\
+          $DIFF_CONTENT"
+          fi
+
+          claude -p "$PROMPT" \\
             --output-format json \\
             --json-schema .claude/review-schema.json \\
             > review_output.json

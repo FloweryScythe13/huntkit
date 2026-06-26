@@ -1,0 +1,80 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Get PR diff
+        id: diff
+        run: |
+          # Fetch the diff between this branch and the base branch
+          git diff origin/${{ github.base_ref }}...HEAD > pr_diff.txt
+          echo "Diff saved to pr_diff.txt"
+
+      - name: Run Claude review
+        id: review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          # Run Claude Code non-interactively with structured output.
+          # The -p flag is what makes it exit cleanly rather than waiting for input.
+          # We pass the diff as context by including it in the prompt.
+          DIFF_CONTENT=$(cat pr_diff.txt)
+
+          claude -p "Review this pull request diff for bugs, security vulnerabilities,
+          missing error handling, and violations of our architecture conventions.
+          Focus on real issues, skip style preferences and things the linter handles.
+
+          PR diff:
+          $DIFF_CONTENT" \\
+            --output-format json \\
+            --json-schema .claude/review-schema.json \\
+            > review_output.json
+
+      - name: Post findings as PR comments
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Parse the structured JSON output and post each finding as a comment.
+          # jq lets us extract the findings array and loop over each entry.
+
+          SUMMARY=$(cat review_output.json | jq -r '.structured_output.summary')
+          FINDINGS=$(cat review_output.json | jq -r '.structured_output.findings[]')
+
+          # Post the overall summary first
+          gh pr comment $PR_NUMBER --body "**Claude Code Review**
+
+          $SUMMARY"
+
+          # Post each finding as a separate comment
+          cat review_output.json | jq -c '.structured_output.findings[]' | while read finding; do
+            FILE=$(echo $finding | jq -r '.file')
+            SEVERITY=$(echo $finding | jq -r '.severity')
+            CATEGORY=$(echo $finding | jq -r '.category')
+            DESCRIPTION=$(echo $finding | jq -r '.description')
+            SUGGESTION=$(echo $finding | jq -r '.suggestion')
+            LINE=$(echo $finding | jq -r '.line // "N/A"')
+
+            gh pr comment $PR_NUMBER --body "**[$SEVERITY] $CATEGORY**, \`$FILE\` (line $LINE)
+
+          $DESCRIPTION
+
+          **Suggested fix:** $SUGGESTION"
+          done

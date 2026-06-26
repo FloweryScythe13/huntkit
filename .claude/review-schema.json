@@ -1,0 +1,45 @@
+{
+  "type": "object",
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "type": "string",
+            "description": "The file path where the issue was found"
+          },
+          "line": {
+            "type": "integer",
+            "description": "The line number of the issue"
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "high", "medium", "low"],
+            "description": "How serious this issue is"
+          },
+          "category": {
+            "type": "string",
+            "enum": ["security", "bug", "performance", "style"],
+            "description": "What kind of issue this is"
+          },
+          "description": {
+            "type": "string",
+            "description": "A clear explanation of the problem"
+          },
+          "suggestion": {
+            "type": "string",
+            "description": "What to do to fix it"
+          }
+        },
+        "required": ["file", "severity", "category", "description", "suggestion"]
+      }
+    },
+    "summary": {
+      "type": "string",
+      "description": "A brief overall summary of the review"
+    }
+  },
+  "required": ["findings", "summary"]
+}
